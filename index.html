@@ -1,0 +1,171 @@
+<!doctype html>
+<html lang="ro">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no">
+<title>Lumea blocurilor</title>
+<style>
+*{box-sizing:border-box}
+body{margin:0;background:#152238;color:#fff;font:16px system-ui,sans-serif}
+#wrap{width:min(960px,100vw);margin:auto;padding:10px}
+#bar{display:flex;justify-content:space-between;gap:8px;align-items:center;margin-bottom:8px}
+canvas{width:100%;display:block;border:3px solid #d6e4ff;image-rendering:pixelated;background:#83cef4;touch-action:none}
+#touch{display:flex;flex-wrap:wrap;justify-content:center;gap:8px;margin-top:10px}
+button{min-width:56px;min-height:52px;border:2px solid white;border-radius:12px;background:#263b88;color:white;font-size:16px;font-weight:bold;touch-action:none}
+#select{min-width:130px}
+</style>
+</head>
+<body>
+<div id="wrap">
+  <div id="bar">
+    <strong>Lumea blocurilor</strong>
+    <span id="inventory">Inventar</span>
+  </div>
+  <canvas id="game" width="960" height="540"></canvas>
+  <div id="touch">
+    <button id="left">◀</button>
+    <button id="jump">SARI</button>
+    <button id="right">▶</button>
+    <button id="mine">SAPĂ</button>
+    <button id="place">PUNE</button>
+    <button id="select">BLOC: PĂMÂNT</button>
+  </div>
+</div>
+<script>
+const canvas=document.querySelector("#game"),ctx=canvas.getContext("2d");
+const inventoryLabel=document.querySelector("#inventory");
+const TILE=32,COLS=80,ROWS=40;
+const world=Array.from({length:ROWS},()=>Array(COLS).fill(null));
+const inventory={grass:0,dirt:0,stone:0};
+const colors={grass:"#53a64b",dirt:"#8b5a35",stone:"#777f8b"};
+
+for(let x=0;x<COLS;x++){
+  const surface=10+Math.floor(Math.sin(x*.22)*1.5+Math.sin(x*.07)*2);
+  for(let y=surface;y<ROWS;y++)
+    world[y][x]=y===surface?"grass":y<surface+4?"dirt":"stone";
+}
+
+const player={x:150,y:100,w:22,h:30,vx:0,vy:0,grounded:false};
+const held=new Set();
+let cameraX=0,cameraY=0,selected="dirt",target=null;
+
+function bindHold(id,action){
+  const button=document.querySelector(id);
+  button.addEventListener("pointerdown",e=>{
+    e.preventDefault();button.setPointerCapture(e.pointerId);held.add(action);
+  });
+  const release=e=>{e.preventDefault();held.delete(action)};
+  button.addEventListener("pointerup",release);
+  button.addEventListener("pointercancel",release);
+  button.addEventListener("lostpointercapture",()=>held.delete(action));
+}
+bindHold("#left","left");
+bindHold("#right","right");
+bindHold("#jump","jump");
+
+function getTarget(e){
+  const r=canvas.getBoundingClientRect();
+  return [
+    Math.floor((e.clientX-r.left)*canvas.width/r.width/TILE+cameraX/TILE),
+    Math.floor((e.clientY-r.top)*canvas.height/r.height/TILE+cameraY/TILE)
+  ];
+}
+canvas.addEventListener("pointerdown",e=>{target=getTarget(e)});
+canvas.addEventListener("pointermove",e=>{if(e.buttons)target=getTarget(e)});
+
+document.querySelector("#mine").addEventListener("pointerdown",e=>{
+  e.preventDefault();
+  if(!target)return;
+  const [x,y]=target;
+  if(inside(x,y)&&world[y][x]){
+    inventory[world[y][x]]++;
+    world[y][x]=null;
+  }
+});
+document.querySelector("#place").addEventListener("pointerdown",e=>{
+  e.preventDefault();
+  if(!target)return;
+  const [x,y]=target;
+  if(inside(x,y)&&!world[y][x]&&inventory[selected]>0){
+    world[y][x]=selected;
+    inventory[selected]--;
+  }
+});
+document.querySelector("#select").addEventListener("pointerdown",e=>{
+  e.preventDefault();
+  selected=selected==="dirt"?"grass":selected==="grass"?"stone":"dirt";
+  document.querySelector("#select").textContent=
+    "BLOC: "+({dirt:"PĂMÂNT",grass:"IARBĂ",stone:"PIATRĂ"}[selected]);
+});
+
+function inside(x,y){return x>=0&&x<COLS&&y>=0&&y<ROWS}
+function solid(px,py){
+  const x=Math.floor(px/TILE),y=Math.floor(py/TILE);
+  return inside(x,y)&&world[y][x]!==null;
+}
+function move(){
+  player.x+=player.vx;
+  if(player.vx>0&&(solid(player.x+player.w,player.y+2)||solid(player.x+player.w,player.y+player.h-2)))
+    player.x=Math.floor((player.x+player.w)/TILE)*TILE-player.w-.01;
+  if(player.vx<0&&(solid(player.x,player.y+2)||solid(player.x,player.y+player.h-2)))
+    player.x=(Math.floor(player.x/TILE)+1)*TILE+.01;
+
+  player.y+=player.vy;
+  player.grounded=false;
+  if(player.vy>0&&(solid(player.x+2,player.y+player.h)||solid(player.x+player.w-2,player.y+player.h))){
+    player.y=Math.floor((player.y+player.h)/TILE)*TILE-player.h-.01;
+    player.vy=0;player.grounded=true;
+  }else if(player.vy<0&&(solid(player.x+2,player.y)||solid(player.x+player.w-2,player.y))){
+    player.y=(Math.floor(player.y/TILE)+1)*TILE+.01;
+    player.vy=0;
+  }
+}
+function draw(){
+  const sky=ctx.createLinearGradient(0,0,0,canvas.height);
+  sky.addColorStop(0,"#70c9f0");sky.addColorStop(1,"#d4efff");
+  ctx.fillStyle=sky;ctx.fillRect(0,0,canvas.width,canvas.height);
+
+  cameraX=Math.max(0,Math.min(player.x-canvas.width/2,COLS*TILE-canvas.width));
+  cameraY=Math.max(0,Math.min(player.y-canvas.height/2,ROWS*TILE-canvas.height));
+
+  for(let y=Math.floor(cameraY/TILE);y<Math.ceil((cameraY+canvas.height)/TILE);y++){
+    for(let x=Math.floor(cameraX/TILE);x<Math.ceil((cameraX+canvas.width)/TILE);x++){
+      if(!inside(x,y)||!world[y][x])continue;
+      const px=x*TILE-cameraX,py=y*TILE-cameraY;
+      ctx.fillStyle=colors[world[y][x]];
+      ctx.fillRect(px,py,TILE,TILE);
+      ctx.strokeStyle="rgba(0,0,0,.15)";
+      ctx.strokeRect(px,py,TILE,TILE);
+      if(world[y][x]==="grass"){
+        ctx.fillStyle="#79ca58";ctx.fillRect(px,py,TILE,6);
+      }
+    }
+  }
+
+  if(target){
+    ctx.strokeStyle="#fff";ctx.lineWidth=2;
+    ctx.strokeRect(target[0]*TILE-cameraX,target[1]*TILE-cameraY,TILE,TILE);
+    ctx.lineWidth=1;
+  }
+
+  const px=player.x-cameraX,py=player.y-cameraY;
+  ctx.fillStyle="#263b88";ctx.fillRect(px,py+10,player.w,player.h-10);
+  ctx.fillStyle="#f1bd8a";ctx.fillRect(px+2,py,player.w-4,13);
+  ctx.fillStyle="#202020";
+  ctx.fillRect(px+5,py+5,3,3);ctx.fillRect(px+15,py+5,3,3);
+
+  inventoryLabel.textContent=
+    `Pământ: ${inventory.dirt} · Iarbă: ${inventory.grass} · Piatră: ${inventory.stone}`;
+}
+function frame(){
+  player.vx=(held.has("right")?3.2:0)-(held.has("left")?3.2:0);
+  if(held.has("jump")&&player.grounded){
+    player.vy=-10.5;player.grounded=false;
+  }
+  player.vy=Math.min(player.vy+.45,12);
+  move();draw();requestAnimationFrame(frame);
+}
+frame();
+</script>
+</body>
+</html>
